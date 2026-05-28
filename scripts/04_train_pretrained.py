@@ -120,7 +120,7 @@ def train_model(model_name: str, model_path: str):
         learning_rate=LR_PRETRAINED,
         warmup_ratio=0.1,
         weight_decay=0.01,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="epoch",
         save_total_limit=1,
         load_best_model_at_end=True,
