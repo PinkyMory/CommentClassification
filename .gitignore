@@ -5,8 +5,5 @@ checkpoints/
 outputs/figures/
 __pycache__/
 *.pyc
-*.pkl
-*.pth
-*.json
 .venv/
 .ipynb_checkpoints/
