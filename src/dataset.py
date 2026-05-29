@@ -6,34 +6,36 @@ from src.preprocess import tokenize
 
 
 class TokenizedDataset(Dataset):
-    """将分词后的文本转为索引序列，供 TextCNN/BiGRU 使用"""
+    """分词后的文本索引序列，供 TextCNN/BiGRU 使用（__init__ 中一次性分词）"""
 
     def __init__(self, csv_path: str, word2idx: dict, max_len: int = 128):
         df = pd.read_csv(csv_path)
-        self.texts = df["text"].tolist()
-        self.labels = df["label"].tolist()
         self.max_len = max_len
         self.word2idx = word2idx
         self.pad_idx = word2idx.get("<PAD>", 0)
         self.unk_idx = word2idx.get("<UNK>", 1)
 
+        # 一次性预分词，避免每个 epoch 重复 jieba.cut
+        self.labels = df["label"].tolist()
+        self.token_ids = []
+        self.attention_masks = []
+        for text in df["text"]:
+            tokens = tokenize(text)
+            ids = [word2idx.get(t, self.unk_idx) for t in tokens][:max_len]
+            mask = [1] * len(ids)
+            pad_len = max_len - len(ids)
+            ids += [self.pad_idx] * pad_len
+            mask += [0] * pad_len
+            self.token_ids.append(ids)
+            self.attention_masks.append(mask)
+
     def __len__(self):
         return len(self.labels)
 
     def __getitem__(self, idx):
-        tokens = tokenize(self.texts[idx])
-        # 截断或填充到 max_len
-        token_ids = [self.word2idx.get(t, self.unk_idx) for t in tokens]
-        token_ids = token_ids[: self.max_len]
-        attention_mask = [1] * len(token_ids)
-        # padding
-        pad_len = self.max_len - len(token_ids)
-        token_ids += [self.pad_idx] * pad_len
-        attention_mask += [0] * pad_len
-
         return {
-            "input_ids": torch.tensor(token_ids, dtype=torch.long),
-            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "input_ids": torch.tensor(self.token_ids[idx], dtype=torch.long),
+            "attention_mask": torch.tensor(self.attention_masks[idx], dtype=torch.long),
             "label": torch.tensor(self.labels[idx], dtype=torch.long),
         }
 
@@ -63,13 +65,17 @@ def build_vocab_from_csv(csv_path: str, min_freq: int = 2, max_vocab: int = 3000
     return vocab
 
 
-def build_embedding_matrix(word2idx: dict, wv_path: str, embed_dim: int = 300) -> np.ndarray:
-    """从预训练词向量构建 embedding matrix"""
-    from gensim.models import KeyedVectors
-
-    wv = KeyedVectors.load_word2vec_format(wv_path, binary=False)
+def build_embedding_matrix(word2idx: dict, wv_path: str = None, embed_dim: int = 300) -> np.ndarray:
+    """从预训练词向量构建 embedding matrix；wv_path 为 None 时随机初始化"""
     matrix = np.random.normal(scale=0.01, size=(len(word2idx), embed_dim)).astype(np.float32)
     matrix[0] = 0.0  # <PAD>
+
+    if wv_path is None:
+        print(f"未提供预训练词向量，使用随机初始化 (vocab={len(word2idx)}, dim={embed_dim})")
+        return matrix
+
+    from gensim.models import KeyedVectors
+    wv = KeyedVectors.load_word2vec_format(wv_path, binary=False)
 
     hit = 0
     for word, idx in word2idx.items():

@@ -61,6 +61,8 @@ def evaluate(
     model.eval()
     total_loss = 0.0
     all_preds, all_labels = [], []
+    # 验证集用无权重 loss，反映真实拟合情况
+    eval_criterion = nn.CrossEntropyLoss()
 
     for batch in dataloader:
         input_ids = batch["input_ids"].to(device)
@@ -68,7 +70,7 @@ def evaluate(
         labels = batch["label"].to(device)
 
         logits = model(input_ids, attention_mask)
-        loss = criterion(logits, labels)
+        loss = eval_criterion(logits, labels)
 
         total_loss += loss.item() * input_ids.size(0)
         preds = logits.argmax(dim=1)

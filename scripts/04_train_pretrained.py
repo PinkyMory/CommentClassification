@@ -18,7 +18,7 @@ from transformers import (
     AutoTokenizer, AutoModelForSequenceClassification,
     Trainer, TrainingArguments, EarlyStoppingCallback,
 )
-from datasets import Dataset, DatasetDict
+from datasets import Dataset
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.utils.class_weight import compute_class_weight
 
@@ -51,7 +51,8 @@ class WeightedTrainer(Trainer):
         labels = inputs.pop("labels")
         outputs = model(**inputs)
         logits = outputs.logits
-        if self.class_weights is not None:
+        # 训练时用加权 loss，验证/测试时用无权重 loss（避免 val_loss 虚高）
+        if self.class_weights is not None and model.training:
             loss_fn = nn.CrossEntropyLoss(weight=self.class_weights.to(logits.device))
         else:
             loss_fn = nn.CrossEntropyLoss()
@@ -84,8 +85,22 @@ def train_model(model_name: str, model_path: str):
     ds_val = load_csv_as_dataset(VAL_PATH)
     ds_test = load_csv_as_dataset(TEST_PATH)
 
-    # Tokenize
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    # Tokenize（优先用本地缓存，无缓存则自动下载）
+    def load_model_and_tokenizer(model_path):
+        for local_only in [True, False]:
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=local_only)
+                model = AutoModelForSequenceClassification.from_pretrained(
+                    model_path, num_labels=NUM_CLASSES, local_files_only=local_only,
+                )
+                return tokenizer, model
+            except OSError:
+                if not local_only:
+                    raise
+                print("  本地缓存未找到，尝试从 HuggingFace 下载...")
+                continue
+
+    tokenizer, model = load_model_and_tokenizer(model_path)
 
     def tokenize_fn(examples):
         return tokenizer(
@@ -97,11 +112,6 @@ def train_model(model_name: str, model_path: str):
     ds_val = ds_val.map(tokenize_fn, batched=True)
     ds_test = ds_test.map(tokenize_fn, batched=True)
 
-    # 模型
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_path, num_labels=NUM_CLASSES,
-    )
-
     # 计算类别权重
     train_labels = pd.read_csv(TRAIN_PATH)["label"].values
     weights = compute_class_weight("balanced", classes=np.array([0, 1, 2]), y=train_labels)
@@ -112,13 +122,16 @@ def train_model(model_name: str, model_path: str):
     output_dir = CHECKPOINT_DIR / f"{model_name}_intermediate"
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    total_steps = (len(ds_train) // BATCH_SIZE_PRETRAINED) * EPOCHS_PRETRAINED
+    warmup_steps = int(total_steps * 0.1)
+
     training_args = TrainingArguments(
         output_dir=str(output_dir),
         num_train_epochs=EPOCHS_PRETRAINED,
         per_device_train_batch_size=BATCH_SIZE_PRETRAINED,
         per_device_eval_batch_size=BATCH_SIZE_PRETRAINED * 2,
         learning_rate=LR_PRETRAINED,
-        warmup_ratio=0.1,
+        warmup_steps=warmup_steps,
         weight_decay=0.01,
         eval_strategy="epoch",
         save_strategy="epoch",
@@ -136,7 +149,7 @@ def train_model(model_name: str, model_path: str):
         args=training_args,
         train_dataset=ds_train,
         eval_dataset=ds_val,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         compute_metrics=compute_metrics_fn,
         callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
     )
@@ -159,18 +172,26 @@ def train_model(model_name: str, model_path: str):
 
     append_to_results_csv(RESULTS_PATH, model_name, metrics)
 
-    # 提取训练历史
+    #  提取训练历史（步级 train_loss 聚合为 epoch 级，与 eval 对齐）
     log_history = trainer.state.log_history
-    train_loss = [e["loss"] for e in log_history if "loss" in e and "eval_loss" not in e]
+    train_steps = [e["loss"] for e in log_history if "loss" in e and "eval_loss" not in e]
     eval_logs = [e for e in log_history if "eval_loss" in e]
     val_loss = [e["eval_loss"] for e in eval_logs]
     val_f1 = [e.get("eval_macro_f1", 0) for e in eval_logs]
 
-    history = {"train_loss": train_loss, "val_loss": val_loss, "val_f1": val_f1}
+    # 将步级 train_loss 按 epoch 数量平分，保证与 val_loss 长度一致
+    n_epochs = len(eval_logs)
+    steps_per_epoch = len(train_steps) // n_epochs if n_epochs > 0 else len(train_steps)
+    train_epoch_losses = []
+    for i in range(n_epochs):
+        chunk = train_steps[i * steps_per_epoch:(i + 1) * steps_per_epoch]
+        train_epoch_losses.append(sum(chunk) / len(chunk) if chunk else 0.0)
+
+    history = {"train_loss": train_epoch_losses, "val_loss": val_loss, "val_f1": val_f1}
 
     # 保存训练曲线 + 混淆矩阵 + 报告
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
-    if len(train_loss) > 0 and len(val_loss) > 0:
+    if len(train_epoch_losses) > 0 and len(val_loss) > 0:
         plot_training_curves(history, str(FIGURE_DIR / f"{model_name}_training_curves.png"))
     plot_confusion_matrix(
         np.array(metrics["confusion_matrix"]), ["差评", "中评", "好评"],

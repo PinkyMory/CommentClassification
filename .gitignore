@@ -7,3 +7,7 @@ __pycache__/
 *.pyc
 .venv/
 .ipynb_checkpoints/
+.DS_Store
+*.log
+ml_project_prompts.md
+CLAUDE.md

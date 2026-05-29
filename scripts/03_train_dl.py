@@ -47,7 +47,6 @@ def compute_class_weights(csv_path: str) -> torch.Tensor:
 def create_weighted_train_loader(csv_path, word2idx, batch_size, max_len):
     """用 WeightedRandomSampler 让每个 batch 三类样本均衡"""
     from src.dataset import TokenizedDataset
-    import pandas as pd
 
     dataset = TokenizedDataset(csv_path, word2idx, max_len)
     df = pd.read_csv(csv_path)
