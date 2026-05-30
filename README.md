@@ -36,7 +36,7 @@
 ├── checkpoints/                 # 训练好的模型权重
 ├── outputs/
 │   ├── figures/                 # 训练过程图 + 混淆矩阵 + 评估报告
-│   └── results.csv              # 所有模型结果汇总（不断追加）
+│   └── results.csv              # 所有模型结果汇总（同名模型的结果会被覆盖）
 ├── requirements.txt
 ├── setup.sh
 └── README.md
@@ -52,10 +52,16 @@ conda activate llm
 pip install -r requirements.txt
 ```
 
-注意：安装 PyTorch 时应指定 CUDA 版本以启用 GPU 加速（RTX 4060 / AutoDL T4 等均可）：
+注意：`requirements.txt` 中的 torch 是 CPU 版，需要按你的 CUDA 版本重新安装以启用 GPU 加速：
 
 ```bash
+# CUDA 12.6（如 RTX 4060 笔记本）
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+
+# CUDA 12.4
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+
+# 不确定 CUDA 版本时先查看：nvidia-smi
 ```
 
 ### 2. 下载数据集
@@ -64,7 +70,18 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 
 [https://openi.pcl.ac.cn/thomas-yanxin/Commodity_Review_Sentiment_Forecast/datasets](https://openi.pcl.ac.cn/thomas-yanxin/Commodity_Review_Sentiment_Forecast/datasets)
 
-登录后，在"数据集"页面下载数据集 zip 文件，解压后**直接把所有内容**放到 `data/raw/` 目录下。最终应包含 `训练集.csv`、`测试集.csv`、`商品信息.csv`、`商品类别列表.csv` 等文件。
+登录后，在"数据集"页面下载数据集 zip 文件，解压后将以下文件直接放到 `data/raw/` 目录下（如果解压后有子文件夹，提取其中的 csv 文件）：
+
+- `训练集.csv`
+- `测试集.csv`
+- `商品信息.csv`
+- `商品类别列表.csv`
+
+如果文件路径不同，运行 `01_sampling.py` 时通过 `--input` 指定，如：
+
+```bash
+python scripts/01_sampling.py --input data/raw/Commodity_Review_Sentiment_Forecast/训练集.csv
+```
 
 ### 3. 数据预处理
 
@@ -105,6 +122,8 @@ python scripts/05_evaluate_all.py
 打印最优模型，生成 `outputs/figures/model_comparison.png` 和 `per_class_f1.png`。
 
 ### 6. Web 演示
+
+> 需要已经训练好至少一个模型（`checkpoints/` 下有模型权重），并且 `outputs/results.csv` 中有记录。
 
 ```bash
 python app/demo.py

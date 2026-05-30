@@ -143,7 +143,7 @@ def split_and_save(df: pd.DataFrame):
 def main():
     parser = argparse.ArgumentParser(description="JD 评论数据分层抽样（三分类）")
     parser.add_argument("--input", type=str,
-                        default="data/raw/Commodity_Review_Sentiment_Forecast/训练集.csv",
+                        default="data/raw/训练集.csv",
                         help="原始数据路径")
     parser.add_argument("--text-col", type=str, default=None,
                         help="评论列名（自动检测）")

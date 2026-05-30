@@ -1,6 +1,8 @@
-data/raw/
+data/raw/**
 data/processed/
-data/embeddings/
+data/embeddings/**
+!data/raw/.gitkeep
+!data/embeddings/.gitkeep
 checkpoints/
 outputs/figures/
 __pycache__/
