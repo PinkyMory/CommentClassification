@@ -1,9 +1,11 @@
+import matplotlib
+matplotlib.use("Agg")  # 无头服务器兼容，必须在 import pyplot 之前
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import numpy as np
 
-# 中文支持
+# 中文支持（Linux 无 SimHei 时回退到 DejaVu Sans）
 plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
 

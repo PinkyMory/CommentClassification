@@ -34,7 +34,6 @@ def load_raw_data(input_path: str) -> pd.DataFrame:
 def find_text_and_star_columns(df: pd.DataFrame) -> tuple[str, str]:
     """自动检测评论列和评分列"""
     # 优先级从高到低：越具体的匹配越靠前
-    # 优先级从高到低：越具体的匹配越靠前
     text_candidates = ["评论内容", "评论标题", "content", "comment", "text", "review", "内容"]
     star_candidates = ["评分", "star", "score", "rating", "stars", "星级"]
 
