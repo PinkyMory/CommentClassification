@@ -14,19 +14,9 @@
 |---|---|---|---|
 | 传统 ML | MultinomialNB、LinearSVC、XGBoost | `scripts/02_train_traditional.py` | 共享 TF-IDF 特征（5000 维 unigram+bigram） |
 | DL 从头训练 | TextCNN、BiGRU+Attention | `scripts/03_train_dl.py` | 共享预训练 Word2Vec 词向量（百度百科 300 维） |
-| 预训练微调 | BERT-base-Chinese、RoBERTa-wwm-ext | `scripts/04_train_pretrained.py` | 110M 参数，字/全词掩码，冻结 backbone 仅微调分类头最后一层 |
+| 预训练微调 | BERT-base-Chinese、RoBERTa-wwm-ext | `scripts/04_train_pretrained.py` | 110M 参数，加载预训练权重后在全量数据上微调 |
 
-三层的每一层都独立使用类别权重 / WeightedRandomSampler 处理不平衡。
-
-## 三人分工
-
-| 同学 | 负责内容 | 脚本 | 核心 src 文件 |
-|---|---|---|---|
-| **A** | 数据工程 + 传统 ML | `01_sampling.py` `02_train_traditional.py` | `preprocess.py` `metrics.py` |
-| **B** | DL 从头训练 | `03_train_dl.py` | `dataset.py` `models/textcnn.py` `models/bigru_attn.py` `train_utils.py` |
-| **C** | 预训练微调 | `04_train_pretrained.py` | `plot.py`（画对比图） |
-
-`src/config.py` 和 `05_evaluate_all.py` 三人共同维护。
+三层每一层都独立使用类别权重 / WeightedRandomSampler 处理类别不平衡。
 
 ## 项目结构
 
@@ -34,19 +24,19 @@
 ├── src/                         # 共享模块（config / preprocess / metrics / plot / dataset / models）
 ├── scripts/                     # 独立训练入口
 │   ├── 01_sampling.py           # 数据抽样 → train/val/test.csv
-│   ├── 02_train_traditional.py
-│   ├── 03_train_dl.py
-│   ├── 04_train_pretrained.py
+│   ├── 02_train_traditional.py  # 传统 ML
+│   ├── 03_train_dl.py           # DL 从头训练
+│   ├── 04_train_pretrained.py   # 预训练微调
 │   └── 05_evaluate_all.py       # 汇总所有模型结果 + 画对比图
 ├── app/                         # Gradio Web 演示
 ├── data/
-│   ├── raw/                     # 原始数据（自己下载）
-│   ├── processed/               # 抽样后产出（脚本生成，不入库）
-│   └── embeddings/              # 预训练词向量（自己下载）
-├── checkpoints/                 # 模型权重（不入库）
+│   ├── raw/                     # 原始数据（需自己下载解压）
+│   ├── processed/               # 抽样后产出（脚本生成）
+│   └── embeddings/              # 预训练词向量（需自己下载，仅 03 需要）
+├── checkpoints/                 # 训练好的模型权重
 ├── outputs/
-│   ├── figures/                 # 训练过程图 + 混淆矩阵（不入库）
-│   └── results.csv              # 所有模型结果汇总（入库，用于对比）
+│   ├── figures/                 # 训练过程图 + 混淆矩阵 + 评估报告
+│   └── results.csv              # 所有模型结果汇总（不断追加）
 ├── requirements.txt
 ├── setup.sh
 └── README.md
@@ -62,23 +52,19 @@ conda activate llm
 pip install -r requirements.txt
 ```
 
-CUDA 版 PyTorch（RTX 4060 8GB 显存够用）：
+注意：安装 PyTorch 时应指定 CUDA 版本以启用 GPU 加速（RTX 4060 / AutoDL T4 等均可）：
 
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 ```
 
 ### 2. 下载数据集
 
-从 OpenI 启智社区下载训练集：
+从 OpenI 启智社区下载训练集压缩包：
 
-[https://openi.pcl.ac.cn/thomas-yanxin/Commodity_Review_Sentiment_Forecast](https://openi.pcl.ac.cn/thomas-yanxin/Commodity_Review_Sentiment_Forecast)
+[https://openi.pcl.ac.cn/thomas-yanxin/Commodity_Review_Sentiment_Forecast/datasets](https://openi.pcl.ac.cn/thomas-yanxin/Commodity_Review_Sentiment_Forecast/datasets)
 
-登录后，在页面顶部"数据集"标签页下载 `训练集.csv`（约 13MB，7 万条）。
-
-放到 `data/raw/Commodity_Review_Sentiment_Forecast/训练集.csv`。
-
-（测试集 `测试集.csv` 没有评分标签，比赛提交用，本项目不需要。）
+登录后，在"数据集"页面下载数据集 zip 文件，解压后**直接把所有内容**放到 `data/raw/` 目录下。最终应包含 `训练集.csv`、`测试集.csv`、`商品信息.csv`、`商品类别列表.csv` 等文件。
 
 ### 3. 数据预处理
 
@@ -86,9 +72,9 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 python scripts/01_sampling.py
 ```
 
-脚本自动检测列名（`评论内容` → text, `评分` → star），清洗无效行，打三分类标签（1-2→差评 / 3→中评 / 4-5→好评），分层切分 train/val/test = 56k/7k/7k，输出到 `data/processed/`。
+脚本自动检测列名（`评论内容` → text, `评分` → star），清洗无效行，打三分类标签，分层切分 train/val/test = 8:1:1，输出到 `data/processed/`。
 
-三个 CSV 的类别分布一致（约 7.8% 差评 / 11.4% 中评 / 80.8% 好评）。
+**数据集概况**：7 万条有标签评论，三分类分布约 差评 7.8% / 中评 11.4% / 好评 80.8%（极度不平衡）。切分后三个 CSV 的分布一致。
 
 ### 4. 训练模型
 
@@ -96,19 +82,18 @@ python scripts/01_sampling.py
 # 传统 ML（最快，2-3 分钟）
 python scripts/02_train_traditional.py
 
-# DL 从头训练（需先下载预训练词向量，约 1 小时）
+# DL 从头训练（需先下载预训练词向量至 data/embeddings/，约 1 小时）
 python scripts/03_train_dl.py --wv-path data/embeddings/sgns.baidubaike.bigram-char
 
-# 预训练微调（首次需下载模型，约 50 分钟/个）
-python scripts/04_train_pretrained.py --model bert
-python scripts/04_train_pretrained.py --model roberta
+# 预训练微调（首次运行自动下载模型，约 50 分钟/个）
+python scripts/04_train_pretrained.py
 ```
 
 单独跑某个模型：
 
 ```bash
-python scripts/03_train_dl.py --model textcnn     # 只训 TextCNN
-python scripts/03_train_dl.py --model bigru_attn  # 只训 BiGRU
+python scripts/03_train_dl.py --model textcnn
+python scripts/04_train_pretrained.py --model bert
 ```
 
 ### 5. 汇总对比
@@ -127,16 +112,17 @@ python app/demo.py
 
 浏览器打开 `http://localhost:7860`。
 
-## 当前结果
+## 预训练词向量（仅 03 脚本需要）
 
-| 模型 | Accuracy | Macro-F1 | 差评 F1 | 中评 F1 | 好评 F1 |
-|---|---|---|---|---|---|
-| MultinomialNB | 0.8234 | 0.4383 | 0.3329 | 0.0772 | 0.9050 |
-| LinearSVC | 0.8296 | 0.4928 | 0.4289 | 0.1392 | 0.9103 |
-| XGBoost | 0.6997 | 0.5260 | 0.4211 | 0.3336 | 0.8233 |
-| BERT | 0.8271 | **0.6568** | **0.6187** | **0.4346** | 0.9172 |
+`03_train_dl.py` 中的 TextCNN 和 BiGRU+Attention 使用预训练 Word2Vec 词向量初始化 Embedding 层。如果不提供词向量，脚本会自动用**随机初始化**（能跑通但效果较差）。
 
-（RoBERTa、TextCNN、BiGRU-Attn 待训练）
+推荐使用 [Chinese-Word-Vectors](https://github.com/Embedding/Chinese-Word-Vectors) 项目中的**百度百科 300 维**词向量：
+
+- 下载地址：[https://github.com/Embedding/Chinese-Word-Vectors](https://github.com/Embedding/Chinese-Word-Vectors)
+- 文件名：`sgns.baidubaike.bigram-char`
+- 放到 `data/embeddings/`
+
+> 传统 ML（02）不需要词向量，它用的是 TF-IDF。预训练微调（04）也不需要，BERT/RoBERTa 自带词表。
 
 ## 输出说明
 
@@ -147,17 +133,3 @@ python app/demo.py
 | `*_confusion_matrix.png` | 混淆矩阵热力图，反映各类别分类错误的方向 |
 | `*_training_curves.png` | 训练过程的 loss 和 macro-F1 变化曲线（仅 DL / 预训练） |
 | `*_report.txt` | 所有评估指标的格式化文本报告 |
-
-## 预训练词向量
-
-推荐 [Chinese-Word-Vectors](https://github.com/Embedding/Chinese-Word-Vectors) 项目中的**百度百科 300 维**：
-
-[下载 sgns.baidubaike.bigram-char](https://github.com/Embedding/Chinese-Word-Vectors)
-
-放到 `data/embeddings/`，`03_train_dl.py` 自动加载。不下载也可以跑（会随机初始化 embedding，但效果差）。
-
-## 注意事项
-
-- 所有路径通过 `src/config.py` 中的 `PROJECT_ROOT` 自动推导，不要写死绝对路径
-- 数据集极度不平衡，模型对比时看 macro-F1，不要看 accuracy
-- 预训练模型在 HuggingFace 缓存到 `C:\Users\<用户名>\.cache\huggingface\hub\`，如果下载慢设镜像：`set HF_ENDPOINT=https://hf-mirror.com`
